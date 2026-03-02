@@ -6,13 +6,14 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.webkit.*
 import androidx.appcompat.app.AppCompatActivity
 import com.domainvoyager.app.service.DomainVisitorService
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.math.min
 
 class WebViewVisitorActivity : AppCompatActivity() {
 
@@ -23,7 +24,7 @@ class WebViewVisitorActivity : AppCompatActivity() {
         private const val PAGE_LOAD_TIMEOUT_MS = 30_000L
         private const val SETTLE_DELAY_MS = 6_000L
 
-        // ✅ Telegram-safe max height for image
+        // Telegram-safe max height for image
         private const val MAX_CAPTURE_HEIGHT_PX = 4096
 
         private const val USER_AGENT =
@@ -37,6 +38,7 @@ class WebViewVisitorActivity : AppCompatActivity() {
     private var screenshotTaken = false
     private var firstPageLoaded = false
     private var saveDir: File? = null
+    private var lastProgress = 0
 
     private val timeoutRunnable = Runnable {
         Log.w(TAG, "Hard timeout reached — forcing screenshot")
@@ -56,6 +58,16 @@ class WebViewVisitorActivity : AppCompatActivity() {
         saveDir = File(filesDir, "screenshots").also { if (!it.exists()) it.mkdirs() }
 
         webView = WebView(this).apply {
+            // ✅ IMPORTANT: real size so WebView actually renders
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+
+            // ✅ keep rendering but visually hidden
+            alpha = 0.01f
+            setBackgroundColor(android.graphics.Color.WHITE)
+
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true
@@ -67,6 +79,13 @@ class WebViewVisitorActivity : AppCompatActivity() {
                 userAgentString = USER_AGENT
             }
 
+            webChromeClient = object : WebChromeClient() {
+                override fun onProgressChanged(view: WebView, newProgress: Int) {
+                    lastProgress = newProgress
+                    Log.d(TAG, "progress=$newProgress url=${view.url}")
+                }
+            }
+
             webViewClient = object : WebViewClient() {
 
                 override fun onPageFinished(view: WebView, url: String) {
@@ -74,10 +93,13 @@ class WebViewVisitorActivity : AppCompatActivity() {
                     if (firstPageLoaded) return
                     firstPageLoaded = true
 
+                    // Let it settle + paint
                     handler.postDelayed({
-                        view.evaluateJavascript("(function(){ return document.readyState; })();") {
-                            Log.d(TAG, "readyState=$it -> screenshot")
-                            takeScreenshotAndFinish()
+                        view.evaluateJavascript("(function(){ return document.readyState; })();") { rs ->
+                            Log.d(TAG, "readyState=$rs progress=$lastProgress -> screenshot soon")
+                            // extra delay if progress still low
+                            val extra = if (lastProgress < 80) 2500L else 800L
+                            handler.postDelayed({ waitForSizeThenScreenshot() }, extra)
                         }
                     }, SETTLE_DELAY_MS)
                 }
@@ -89,7 +111,7 @@ class WebViewVisitorActivity : AppCompatActivity() {
                 ) {
                     if (request.isForMainFrame) {
                         Log.e(TAG, "Main frame error: ${error.description}")
-                        handler.postDelayed({ takeScreenshotAndFinish() }, 2_000)
+                        handler.postDelayed({ takeScreenshotAndFinish() }, 1500)
                     }
                 }
             }
@@ -104,51 +126,55 @@ class WebViewVisitorActivity : AppCompatActivity() {
         handler.postDelayed(timeoutRunnable, PAGE_LOAD_TIMEOUT_MS)
     }
 
+    private fun waitForSizeThenScreenshot() {
+        if (screenshotTaken) return
+
+        // ✅ wait until WebView is actually laid out
+        if (webView.width <= 1 || webView.height <= 1) {
+            Log.w(TAG, "WebView size not ready (${webView.width}x${webView.height}), waiting...")
+            handler.postDelayed({ waitForSizeThenScreenshot() }, 300)
+            return
+        }
+
+        takeScreenshotAndFinish()
+    }
+
     private fun takeScreenshotAndFinish() {
         if (screenshotTaken) return
         screenshotTaken = true
         handler.removeCallbacksAndMessages(null)
-        doScreenshot()
+
+        val path = doScreenshot()
+        reportResult(path)
+        finish()
     }
 
-    private fun doScreenshot() {
-        val path = try {
-            // Force layout measurement
-            webView.measure(
-                View.MeasureSpec.makeMeasureSpec(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED),
-                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-            )
+    private fun doScreenshot(): String {
+        return try {
+            val w = webView.width.coerceAtLeast(1)
 
-            // ✅ Clamp height so Telegram accepts
-            val width = webView.measuredWidth.coerceAtLeast(1)
-            val fullHeight = webView.measuredHeight.coerceAtLeast(1)
-            val height = minOf(fullHeight, MAX_CAPTURE_HEIGHT_PX)
+            // ✅ capture viewport height (stable). clamp for Telegram anyway.
+            val fullH = webView.height.coerceAtLeast(1)
+            val h = min(fullH, MAX_CAPTURE_HEIGHT_PX)
 
-            webView.layout(0, 0, width, height)
-
-            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-            webView.draw(Canvas(bitmap))
+            val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            webView.draw(canvas)
 
             val safeName = (webView.url ?: "screenshot")
                 .replace(Regex("[^a-zA-Z0-9._-]"), "_")
                 .take(50)
 
             val file = File(saveDir, "${safeName}_${System.currentTimeMillis()}.jpg")
-
-            // ✅ Save as JPEG (smaller + Telegram friendly)
             FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 85, it) }
             bitmap.recycle()
 
-            Log.i(TAG, "Screenshot saved: ${file.absolutePath} (${file.length()} bytes) " +
-                    "w=$width h=$height fullH=$fullHeight")
+            Log.i(TAG, "Screenshot saved: ${file.absolutePath} (${file.length()} bytes) w=$w h=$h")
             file.absolutePath
         } catch (e: Exception) {
-            Log.e(TAG, "Screenshot failed: ${e.message}")
+            Log.e(TAG, "Screenshot failed: ${e.message}", e)
             ""
         }
-
-        reportResult(path)
-        finish()
     }
 
     private fun reportResult(path: String) {
