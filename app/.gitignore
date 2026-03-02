@@ -1,1 +1,122 @@
-/build
+# ===============================
+# Android / Gradle
+# ===============================
+
+.gradle/
+build/
+*/build/
+out/
+
+# Kotlin
+.kotlin/
+
+# Local configuration (DO NOT COMMIT)
+local.properties
+
+# ===============================
+# Android Studio / IntelliJ
+# ===============================
+
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Editor specific
+.idea/caches/
+.idea/libraries/
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+
+# ===============================
+# OS Files
+# ===============================
+
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===============================
+# Log Files
+# ===============================
+
+*.log
+
+# ===============================
+# Generated files
+# ===============================
+
+captures/
+.externalNativeBuild/
+.cxx/
+bin/
+gen/
+
+# ===============================
+# NDK
+# ===============================
+
+obj/
+*.so
+
+# ===============================
+# APK / AAB / Build Outputs
+# ===============================
+
+*.apk
+*.ap_
+*.aab
+
+# ===============================
+# Keystore Files (VERY IMPORTANT)
+# ===============================
+
+*.jks
+*.keystore
+signing.properties
+release.properties
+
+# ===============================
+# Firebase (Optional - if private)
+# ===============================
+
+app/google-services.json
+
+# ===============================
+# Proguard
+# ===============================
+
+proguard/
+*.pro
+
+# ===============================
+# Testing / Coverage
+# ===============================
+
+coverage/
+*.ec
+
+# ===============================
+# Navigation Safe Args
+# ===============================
+
+.navigation/
+
+# ===============================
+# Fastlane
+# ===============================
+
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+fastlane/test_output/
+
+# ===============================
+# Temporary Files
+# ===============================
+
+*.tmp
+*.bak
+*.swp
